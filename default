@@ -1,48 +1,93 @@
 server {
-    #proxy_cache cache;
-    #proxy_cache_valid 200 1s;
     listen 8080;
     listen [::]:8080;
-    root /home/site/wwwroot/public; # Changed for Laravel
-    index  index.php index.html index.htm;
-    server_name  example.com www.example.com; 
+    root /home/site/wwwroot/public;
+    index index.php index.html index.htm;
+    server_name _;  # Catch-all server name
     port_in_redirect off;
 
-    location / {            
-        index  index.php index.html index.htm hostingstart.html;
-        try_files $uri $uri/ /index.php?$args; # Changed for Laravel
+    # Security headers
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+
+    # Logging
+    error_log /var/log/nginx/error.log;
+    access_log /var/log/nginx/access.log;
+
+    # Azure App Service proxy headers (CRITICAL!)
+    # Trust headers from Azure's load balancer
+    real_ip_header X-Forwarded-For;
+    set_real_ip_from 10.0.0.0/8;
+    set_real_ip_from 172.16.0.0/12;
+    set_real_ip_from 192.168.0.0/16;
+    
+    # Pass proxy headers to PHP
+    fastcgi_param HTTP_X_FORWARDED_PROTO $http_x_forwarded_proto;
+    fastcgi_param HTTP_X_FORWARDED_HOST $http_x_forwarded_host;
+    fastcgi_param HTTP_X_FORWARDED_PORT $http_x_forwarded_port;
+    fastcgi_param HTTP_X_FORWARDED_FOR $http_x_forwarded_for;
+
+    # Main location block
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
     }
 
-    # redirect server error pages to the static page /50x.html
-    #
-    #error_page   500 502 503 504  /50x.html; # Commented out for Laravel so that Laravel debug mode pages are shown
-    location = /50x.html {
-        root   /html/;
+    # PHP-FPM configuration
+    location ~ \.php$ {
+        try_files $uri =404;
+        fastcgi_split_path_info ^(.+\.php)(/.+)$;
+        fastcgi_pass 127.0.0.1:9000;
+        fastcgi_index index.php;
+        include fastcgi_params;
+        
+        # Critical FastCGI parameters
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        fastcgi_param PATH_INFO $fastcgi_path_info;
+        fastcgi_param QUERY_STRING $query_string;
+        fastcgi_param HTTP_PROXY "";
+        
+        # Azure proxy headers for PHP
+        fastcgi_param HTTP_X_FORWARDED_PROTO $http_x_forwarded_proto;
+        fastcgi_param HTTP_X_FORWARDED_HOST $http_x_forwarded_host;
+        fastcgi_param HTTP_X_FORWARDED_PORT $http_x_forwarded_port;
+        fastcgi_param HTTP_X_FORWARDED_FOR $http_x_forwarded_for;
+        
+        # Performance settings
+        fastcgi_intercept_errors on;
+        fastcgi_connect_timeout 300;
+        fastcgi_send_timeout 3600;
+        fastcgi_read_timeout 3600;
+        fastcgi_buffer_size 128k;
+        fastcgi_buffers 4 256k;
+        fastcgi_busy_buffers_size 256k;
+        fastcgi_temp_file_write_size 256k;
     }
-    
-    # Disable .git directory
+
+    # Deny access to .git directory
     location ~ /\.git {
         deny all;
         access_log off;
         log_not_found off;
     }
 
-    # Add locations of phpmyadmin here.
-    location ~ [^/]\.php(/|$) {
-        fastcgi_split_path_info ^(.+?\.php)(|/.*)$;
-        fastcgi_pass 127.0.0.1:9000;
-        include fastcgi_params;
-        fastcgi_param HTTP_PROXY "";
-        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
-        fastcgi_param PATH_INFO $fastcgi_path_info;
-        fastcgi_param QUERY_STRING $query_string;
-        fastcgi_intercept_errors on;
-        fastcgi_connect_timeout         300; 
-        fastcgi_send_timeout           3600; 
-        fastcgi_read_timeout           3600;
-        fastcgi_buffer_size 128k;
-        fastcgi_buffers 4 256k;
-        fastcgi_busy_buffers_size 256k;
-        fastcgi_temp_file_write_size 256k;
+    # Deny access to hidden files (except .well-known)
+    location ~ /\.(?!well-known).* {
+        deny all;
+        access_log off;
+        log_not_found off;
+    }
+
+    # Deny access to sensitive files
+    location ~ /\.(env|htaccess|gitignore)$ {
+        deny all;
+        access_log off;
+        log_not_found off;
+    }
+
+    # Error pages (commented for Laravel debug mode)
+    # error_page 500 502 503 504 /50x.html;
+    location = /50x.html {
+        root /html/;
     }
 }
