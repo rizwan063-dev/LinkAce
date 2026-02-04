@@ -33,8 +33,4 @@ server {
       add_header Cache-Control "public";
       try_files $uri @fallback;
     }
-
-    location ~ /\.(?!well-known).* {
-        deny all;
-    }
 }
